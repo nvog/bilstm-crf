@@ -22,8 +22,9 @@ class BiLSTMCRF:
         self.b_output = self.pc.add_parameters(len(label_vocab))
         self.transitions = self.pc.add_parameters((len(label_vocab), len(label_vocab)))
 
-    def calc_label_scores(self, sent):
-        dy.renew_cg()
+    def calc_label_scores(self, sent, autobatch):
+        if not autobatch:
+            dy.renew_cg()
         bilstm_outputs = self.bilstm.transduce([self.embeddings[word_idx] for word_idx in sent])
         label_scores = dy.affine_transform([dy.parameter(self.b_output), dy.parameter(self.W_output),
                                             dy.concatenate_cols(bilstm_outputs)])
@@ -32,13 +33,13 @@ class BiLSTMCRF:
     def viterbi_decode(self, emission_prob):
         pass
 
-    def tag_sentence(self, sent):
-        label_scores = self.calc_label_scores(sent)
+    def tag_sentence(self, sent, autobatch):
+        label_scores = self.calc_label_scores(sent, autobatch)
         score, best_label_sequence = self.viterbi_decode(label_scores)
 
-    def calc_loss(self, sent, labels):
+    def calc_loss(self, sent, labels, autobatch):
         # calc neg log likelihood
-        label_scores = self.calc_label_scores(sent)
+        label_scores = self.calc_label_scores(sent, autobatch)
         forward_score = self.forward_alg(label_scores)
         gold_score = self.score_sent_labels(label_scores, labels)
         return forward_score - gold_score
@@ -93,28 +94,35 @@ class BiLSTMCRF:
         return score
 
 
-def train(model, train_data, dev_data, trainer, epochs, ):
+def train(model, train_data, dev_data, trainer, epochs, autobatch=False):
     avg_loss_time = avg_back_time = avg_update_time = 0
     print('Training for {} epochs on {} sentences of training data.'.format(epochs, len(train_data)))
     for epoch in range(epochs):
+        if autobatch:
+            dy.renew_cg()
         print('EPOCH:', epoch+1)
-        train_loss = dev_loss = 0
+        train_losses = []
+        dev_losses = []
         start_time = time.time()
         for i, (sent, labels) in enumerate(train_data):
-            loss = model.calc_loss(sent, labels)
-            train_loss += loss.value()
-            loss.backward()
-            trainer.update()
-            if i+1 % 1000 == 0:
-                print("--finished {} iters".format(i))
+            loss = model.calc_loss(sent, labels, autobatch)
+            train_losses.append(loss)  # accumulare expressions for autobatching
+            # if (i + 1) % 1000 == 0:
+            #     print("--finished {} iters".format(i+1))
+        avg_train_loss = dy.esum(train_losses) / len(train_data)  # for autobatching, do forward pass now
+        avg_train_loss.backward()
+        trainer.update()
         time_elapsed = time.time() - start_time
-        print('TRAIN: loss={:4f}, time={:.2f}s'.format(train_loss, time_elapsed))
+        print('TRAIN: loss/sent={:4f}, time/sent={:.2f}s'.format(avg_train_loss,
+                                                                 time_elapsed / len(train_data)))
 
         start_time = time.time()
         for sent, labels in dev_data:
-            dev_loss += model.calc_loss(sent, labels).value()
+            dev_losses.append(model.calc_loss(sent, labels))
+        avg_dev_loss = dy.esum(dev_losses) / len(dev_data)
         time_elapsed = time.time() - start_time
-        print('DEV: loss={:.4f}, time={:.2f}s'.format(dev_loss, time_elapsed))
+        print('DEV: loss/sent={:.4f}, time/sent={:.2f}s'.format(avg_dev_loss,
+                                                                time_elapsed / len(dev_data)))
         # save model checkpoint
         model_path = "models/{}".format(datetime.datetime.now().strftime('%m-%d_%H%M'))
         if not os.path.exists(model_path):
@@ -137,7 +145,7 @@ if __name__ == '__main__':
     parser.add_argument('--hidden-dim', default=256, type=int, help='Dimension of the hidden state. '
                                                                     'Will be doubled (bidirectional).')
     parser.add_argument('--nlayers', default=1, type=int)
-    parser.add_argument('--batch-size', default=16, type=int)
+    # parser.add_argument('--batch-size', default=16, type=int)  # TODO: add manual batching
     # train params
     parser.add_argument('--epochs', default=5, type=int)
     args = parser.parse_args()
@@ -153,4 +161,4 @@ if __name__ == '__main__':
 
     trainer = dy.AdamTrainer(model.pc)
     trainer.set_clip_threshold(5)
-    train(model, train_data, dev_data, trainer, args.epochs)
+    train(model, train_data, dev_data, trainer, args.epochs, autobatch=args.dynet_autobatch)
