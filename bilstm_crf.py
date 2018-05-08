@@ -201,19 +201,25 @@ def train(model, train_data, dev_data, trainer, epochs, train_batch_size, dev_ba
     print(best_epoch)
 
 
-def decode(model, word_vocab, label_vocab, test_data, test_batch_size, output_file, as_pos_tagger=False):
+def decode(model, word_vocab, label_vocab, test_data, test_batch_size, output_file, as_pos_tagger):
     # TODO: autobatched decoding
     test_batches = create_batches(test_data, test_batch_size)
     labeled_sents = []
     for batch_idx, (start, length) in enumerate(test_batches):
         test_batch = test_data[start:start + length]
         if as_pos_tagger:
-            for i, (sent, pos_tags, bio) in enumerate(test_batch):
+            # for i, (sent, pos_tags, bio) in enumerate(test_batch):
+            #     dy.renew_cg()
+            #     words = [word_vocab.i2w[word_idx] for word_idx in sent]
+            #     gt_pos_tags = [label_vocab.i2w[label_idx] for label_idx in pos_tags]
+            #     hyp_pos_tags = model.tag_sentence(sent)[1]
+            #     labeled_sents.append(list(zip(words, bio, gt_pos_tags, hyp_pos_tags)))
+            for i, (sent, pos_tags) in enumerate(test_batch):
                 dy.renew_cg()
                 words = [word_vocab.i2w[word_idx] for word_idx in sent]
                 gt_pos_tags = [label_vocab.i2w[label_idx] for label_idx in pos_tags]
                 hyp_pos_tags = model.tag_sentence(sent)[1]
-                labeled_sents.append(list(zip(words, bio, gt_pos_tags, hyp_pos_tags)))
+                labeled_sents.append(list(zip(words, ['-']*len(words), ['-']*len(words), gt_pos_tags, hyp_pos_tags)))
         else:
             for i, (sent, pos_tags, chunks, labels) in enumerate(test_batch):
                 dy.renew_cg()
@@ -236,7 +242,7 @@ if __name__ == '__main__':
     parser.add_argument('--train', default='data/train.data', type=str)
     parser.add_argument('--dev', default='data/dev.data', type=str)
     parser.add_argument('--test', default='data/test.data', type=str)
-    parser.add_argument('--output', default='output/test.hyp')
+    parser.add_argument('--output', default='output/test.data.hyp')
     # model params
     parser.add_argument('--embed-dim', default=64, type=int)
     parser.add_argument('--hidden-dim', default=128, type=int, help='Dimension of the hidden state. '
@@ -285,8 +291,8 @@ if __name__ == '__main__':
     # output results to file
     if args.as_pos_tagger:
         test_data = list(data.read_conll_spanish_sent(args.test, word_vocab, label_vocab,
-                                                      fields=('word', 'pos_tag', 'bio')))
+                                                      fields=('word', 'pos_tag')))
     else:
         test_data = list(data.read_conll_sentence(args.test, word_vocab, label_vocab,
                                                   fields=('word', 'pos_tag', 'chunk', 'bio')))
-    decode(model, word_vocab, label_vocab, test_data, args.test_batch_size, args.output)
+    decode(model, word_vocab, label_vocab, test_data, args.test_batch_size, args.output, args.as_pos_tagger)
