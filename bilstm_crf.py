@@ -21,8 +21,8 @@ class BiLSTMCRF:
         self.word_vocab = word_vocab
         self.label_vocab = label_vocab
         self.embeddings = self.pc_all.add_lookup_parameters((len(word_vocab), embed_dim))
-        self.bilstm = dy.BiRNNBuilder(nlayers, embed_dim, hidden_dim * 2, self.pc, dy.LSTMBuilder)
-        self.W_output = self.pc.add_parameters((len(label_vocab), hidden_dim * 2))
+        self.bilstm = dy.BiRNNBuilder(nlayers, embed_dim, hidden_dim, self.pc, dy.LSTMBuilder)
+        self.W_output = self.pc.add_parameters((len(label_vocab), hidden_dim))
         self.b_output = self.pc.add_parameters(len(label_vocab))
         # transitions[x][y] from y to x
         transitions = np.random.randn(len(label_vocab), len(label_vocab))
@@ -108,7 +108,7 @@ class BiLSTMCRF:
         return score
 
     def load(self, path):
-        self.pc.populate(path)
+        self.pc.populate(path)  # TODO: currently does not work
 
 
 def create_batches(dataset, max_batch_size):
@@ -155,7 +155,6 @@ def train(model, train_data, dev_data, trainer, epochs, train_batch_size, dev_ba
         print('EPOCH:', epoch+1)
         print("Shuffling batches")
         random.shuffle(train_batches)
-        random.shuffle(dev_batches)            # TODO: delete
         train_losses, train_loss = [], 0.0
         dev_losses, dev_loss = [], 0.0
         epoch_start_time = batch_start_time = time.time()
@@ -198,7 +197,7 @@ def train(model, train_data, dev_data, trainer, epochs, train_batch_size, dev_ba
         if dev_loss < best_loss:
             best_loss = dev_loss
             best_epoch = epoch + 1
-    print(best_epoch)
+    print('Best epoch by dev loss:', best_epoch)
 
 
 def decode(model, word_vocab, label_vocab, test_data, test_batch_size, output_file, as_pos_tagger):
@@ -208,12 +207,6 @@ def decode(model, word_vocab, label_vocab, test_data, test_batch_size, output_fi
     for batch_idx, (start, length) in enumerate(test_batches):
         test_batch = test_data[start:start + length]
         if as_pos_tagger:
-            # for i, (sent, pos_tags, bio) in enumerate(test_batch):
-            #     dy.renew_cg()
-            #     words = [word_vocab.i2w[word_idx] for word_idx in sent]
-            #     gt_pos_tags = [label_vocab.i2w[label_idx] for label_idx in pos_tags]
-            #     hyp_pos_tags = model.tag_sentence(sent)[1]
-            #     labeled_sents.append(list(zip(words, bio, gt_pos_tags, hyp_pos_tags)))
             for i, (sent, pos_tags) in enumerate(test_batch):
                 dy.renew_cg()
                 words = [word_vocab.i2w[word_idx] for word_idx in sent]
@@ -245,19 +238,17 @@ if __name__ == '__main__':
     parser.add_argument('--output', default='output/test.data.hyp')
     # model params
     parser.add_argument('--embed-dim', default=64, type=int)
-    parser.add_argument('--hidden-dim', default=128, type=int, help='Dimension of the hidden state. '
-                                                                    'Will be doubled (bidirectional).')
+    parser.add_argument('--hidden-dim', default=256, type=int, help='Dimension of the bidirectional hidden state.')
     parser.add_argument('--nlayers', default=1, type=int)
     # train params
     parser.add_argument('--train-batch-size', default=16, type=int)
-    parser.add_argument('--dev-batch-size', default=8, type=int)
+    parser.add_argument('--dev-batch-size', default=16, type=int)
     parser.add_argument('--print-every', default=50, type=int, help='Print progress every N batches.')
     parser.add_argument('--epochs', default=5, type=int)
-    parser.add_argument('--early-stopping', default=1, type=int, help='Whether or not to perform early stopping.')
     # loading and translating
-    parser.add_argument('--from-checkpoint', type=str, default=None)
+    parser.add_argument('--from-checkpoint', type=str, default=None)  # TODO: fix; does not work currently
     parser.add_argument('--no-training', action='store_true', help="Don't perform training.")
-    parser.add_argument('--test-batch-size', default=8, type=int)
+    parser.add_argument('--test-batch-size', default=8, type=int)  # TODO: add batched decoding; currently not working
     parser.add_argument('--as-pos-tagger', action='store_true')
     args = parser.parse_args()
 
@@ -281,7 +272,8 @@ if __name__ == '__main__':
 
     model = BiLSTMCRF(args.embed_dim, args.hidden_dim, args.nlayers, word_vocab, label_vocab)
     if args.from_checkpoint:
-        model.load(args.from_checkpoint)
+        raise NotImplementedError()
+        # model.load(args.from_checkpoint)
 
     if not args.no_training:
         trainer = dy.AdamTrainer(model.pc_all)
